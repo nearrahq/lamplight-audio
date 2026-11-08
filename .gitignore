@@ -1,0 +1,7 @@
+models/
+audio-chapters/
+out/
+site/web/
+site/kjv/
+node_modules/
+.wrangler/

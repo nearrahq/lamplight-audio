@@ -1,0 +1,54 @@
+name: render
+# Narrates every chapter of the Bible (WEB + KJV) with Kokoro, 40 jobs at once, then publishes the files to the
+# lamplight-audio Worker (https://lamplight-audio.hill-nicholas.workers.dev/<tr>/<book n>/<chapter>.m4a + t.json).
+on: workflow_dispatch
+permissions: { contents: read }
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        tr: [web, kjv]
+        group: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: pip install -q kokoro-onnx==0.6.1 onnxruntime==1.31.1
+      - name: model
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          mkdir -p models
+          for f in kokoro-v1.0.fp16.onnx voices-v1.0.bin; do
+            curl -sSfL --retry 5 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
+              "$(curl -sSf -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/${{ github.repository }}/releases/tags/model | python3 -c "import json,sys;print([a['url'] for a in json.load(sys.stdin)['assets'] if a['name']=='$f'][0])")" -o models/$f
+          done
+          sha256sum -c model.sha256
+      - name: narrate
+        env:
+          KOKORO_MODEL: models/kokoro-v1.0.fp16.onnx
+          KOKORO_VOICES: models/voices-v1.0.bin
+          CHAPTERS_OUT: out
+        run: python scripts/voice-chapters.py --only ${{ matrix.tr }} --group ${{ matrix.group }}/20
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: "ch-${{ matrix.tr }}-${{ matrix.group }}", path: out/, retention-days: 7, compression-level: 0 }
+  publish:
+    needs: render
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: "ch-*", path: site, merge-multiple: true }
+      - run: find site -name '*.m4a' | wc -l && du -sh site
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npx -y wrangler@4 deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
