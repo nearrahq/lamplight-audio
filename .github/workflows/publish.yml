@@ -1,0 +1,21 @@
+name: publish
+# Publishes every chapter finished so far in a render run (its artifacts), so narration goes live while the rest renders.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id: { description: "render run id", required: true }
+permissions: { contents: read, actions: read }
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: "ch-*", path: site, merge-multiple: true, run-id: "${{ inputs.run_id }}", github-token: "${{ github.token }}" }
+      - run: find site -name '*.m4a' | wc -l && du -sh site
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npx -y wrangler@4 deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
