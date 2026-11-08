@@ -43,6 +43,14 @@ def groups(n):
     return [sorted(s[1], key=lambda b: b["n"]) for s in shares]
 
 
+def safe(audio, out, aac):
+    """Fallback master: one-pass loudnorm to -16 LUFS behind a limiter at -3 dBFS, no true-peak retry loop."""
+    tmp = out.with_suffix(".tmp.m4a")
+    vb.ffmpeg([*vb.PCM, "-af", "alimiter=limit=0.708:level=false,loudnorm=I=-16:TP=-2:LRA=11,alimiter=limit=0.79:level=false,aresample=24000", *aac, "-y", str(tmp)],
+              audio.astype("<f4").tobytes())
+    tmp.replace(out)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", choices=vb.TRS)
@@ -72,7 +80,11 @@ def main():
                 if args.limit and made >= args.limit: return 0
                 t0 = time.time()
                 audio, starts = render(tts, verses, voice, lang, speed)
-                vb.master(audio, out, aac)
+                try:
+                    vb.master(audio, out, aac)
+                except Exception as e:  # noqa: BLE001  (Linux's AAC encoder can overshoot the -1.7 dBTP check)
+                    print(f"{tr} {bk['id']} {c}: strict mastering failed ({e}); safe limiter instead", flush=True)
+                    safe(audio, out, aac)
                 times[str(c)] = starts
                 tpath.write_text(json.dumps(times, separators=(",", ":")))
                 made += 1

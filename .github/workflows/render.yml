@@ -1,8 +1,11 @@
 name: render
 # Narrates every chapter of the Bible (WEB + KJV) with Kokoro, 40 jobs at once, then publishes the files to the
 # lamplight-audio Worker (https://lamplight-audio.hill-nicholas.workers.dev/<tr>/<book n>/<chapter>.m4a + t.json).
-on: workflow_dispatch
-permissions: { contents: read }
+on:
+  workflow_dispatch:
+    inputs:
+      resume_run: { description: "earlier render run id whose finished chapters to keep (optional)", required: false, default: "" }
+permissions: { contents: read, actions: read }
 jobs:
   render:
     runs-on: ubuntu-latest
@@ -28,6 +31,11 @@ jobs:
               "$(curl -sSf -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/${{ github.repository }}/releases/tags/model | python3 -c "import json,sys;print([a['url'] for a in json.load(sys.stdin)['assets'] if a['name']=='$f'][0])")" -o models/$f
           done
           (cd models && sha256sum -c ../model.sha256)
+      - name: chapters already rendered in the earlier run
+        if: inputs.resume_run != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with: { name: "ch-${{ matrix.tr }}-${{ matrix.group }}", path: out, run-id: "${{ inputs.resume_run }}", github-token: "${{ github.token }}" }
       - name: narrate
         env:
           KOKORO_MODEL: models/kokoro-v1.0.fp16.onnx
